@@ -1,6 +1,8 @@
 import type {
   DecodedWitnessSet,
   DecodedTransaction,
+  DecodedDatum,
+  DecodedRedeemer,
   ComparisonResult,
 } from "./types.js";
 
@@ -11,75 +13,71 @@ export function compareWitnessSets(
   ws1: DecodedWitnessSet,
   ws2: DecodedWitnessSet,
 ): string[] {
-  const differences: string[] = [];
+  return [
+    ...comparePlutusData(ws1.plutusData ?? [], ws2.plutusData ?? []),
+    ...compareRedeemers(ws1.redeemers ?? [], ws2.redeemers ?? []),
+    ...compareScriptHashes(ws1.plutusScriptHashes ?? [], ws2.plutusScriptHashes ?? []),
+  ];
+}
 
-  // Compare plutus data count
-  const pd1Count = ws1.plutusData?.length ?? 0;
-  const pd2Count = ws2.plutusData?.length ?? 0;
-  if (pd1Count !== pd2Count) {
-    differences.push(`Plutus data count differs: ${pd1Count} vs ${pd2Count}`);
-  } else if (ws1.plutusData && ws2.plutusData) {
-    for (let i = 0; i < pd1Count; i++) {
-      if (ws1.plutusData[i].hex !== ws2.plutusData[i].hex) {
-        differences.push(`Plutus data at index ${i} differs`);
-        differences.push(`  TX1: ${ws1.plutusData[i].hex.slice(0, 80)}...`);
-        differences.push(`  TX2: ${ws2.plutusData[i].hex.slice(0, 80)}...`);
-
-        // Find specific field differences
-        const fieldDiffs = findJsonDifferences(
-          ws1.plutusData[i].json,
-          ws2.plutusData[i].json,
-          "  ",
-        );
-        differences.push(...fieldDiffs);
-      }
-    }
+function comparePlutusData(pd1: DecodedDatum[], pd2: DecodedDatum[]): string[] {
+  if (pd1.length !== pd2.length) {
+    return [`Plutus data count differs: ${pd1.length} vs ${pd2.length}`];
   }
 
-  // Compare redeemers
-  const r1Count = ws1.redeemers?.length ?? 0;
-  const r2Count = ws2.redeemers?.length ?? 0;
-  if (r1Count !== r2Count) {
-    differences.push(`Redeemer count differs: ${r1Count} vs ${r2Count}`);
-  } else if (ws1.redeemers && ws2.redeemers) {
-    for (let i = 0; i < r1Count; i++) {
-      const r1 = ws1.redeemers[i];
-      const r2 = ws2.redeemers[i];
-      if (r1.tag !== r2.tag) {
-        differences.push(`Redeemer ${i} tag differs: ${r1.tag} vs ${r2.tag}`);
-      }
-      if (r1.index !== r2.index) {
-        differences.push(`Redeemer ${i} index differs: ${r1.index} vs ${r2.index}`);
-      }
-      if (r1.dataHex !== r2.dataHex) {
-        differences.push(`Redeemer ${i} data differs`);
-        differences.push(`  TX1: ${r1.dataHex.slice(0, 80)}...`);
-        differences.push(`  TX2: ${r2.dataHex.slice(0, 80)}...`);
-      }
-      if (r1.exUnits.mem !== r2.exUnits.mem || r1.exUnits.steps !== r2.exUnits.steps) {
-        differences.push(
-          `Redeemer ${i} exUnits differs: (${r1.exUnits.mem}, ${r1.exUnits.steps}) vs (${r2.exUnits.mem}, ${r2.exUnits.steps})`,
-        );
-      }
-    }
+  return pd1.flatMap((datum, i) => {
+    if (datum.hex === pd2[i].hex) return [];
+    return [
+      `Plutus data at index ${i} differs`,
+      `  TX1: ${datum.hex.slice(0, 80)}...`,
+      `  TX2: ${pd2[i].hex.slice(0, 80)}...`,
+      ...findJsonDifferences(datum.json, pd2[i].json, "  "),
+    ];
+  });
+}
+
+function compareRedeemers(r1: DecodedRedeemer[], r2: DecodedRedeemer[]): string[] {
+  if (r1.length !== r2.length) {
+    return [`Redeemer count differs: ${r1.length} vs ${r2.length}`];
   }
 
-  // Compare plutus scripts
-  const ps1 = ws1.plutusScriptHashes ?? [];
-  const ps2 = ws2.plutusScriptHashes ?? [];
+  return r1.flatMap((redeemer, i) => {
+    const other = r2[i];
+    const diffs: string[] = [];
+
+    if (redeemer.tag !== other.tag) {
+      diffs.push(`Redeemer ${i} tag differs: ${redeemer.tag} vs ${other.tag}`);
+    }
+    if (redeemer.index !== other.index) {
+      diffs.push(`Redeemer ${i} index differs: ${redeemer.index} vs ${other.index}`);
+    }
+    if (redeemer.dataHex !== other.dataHex) {
+      diffs.push(
+        `Redeemer ${i} data differs`,
+        `  TX1: ${redeemer.dataHex.slice(0, 80)}...`,
+        `  TX2: ${other.dataHex.slice(0, 80)}...`,
+      );
+    }
+    if (redeemer.exUnits.mem !== other.exUnits.mem || redeemer.exUnits.steps !== other.exUnits.steps) {
+      diffs.push(
+        `Redeemer ${i} exUnits differs: (${redeemer.exUnits.mem}, ${redeemer.exUnits.steps}) vs (${other.exUnits.mem}, ${other.exUnits.steps})`,
+      );
+    }
+
+    return diffs;
+  });
+}
+
+function compareScriptHashes(ps1: string[], ps2: string[]): string[] {
   if (ps1.length !== ps2.length) {
-    differences.push(`Plutus script count differs: ${ps1.length} vs ${ps2.length}`);
-  } else {
-    for (let i = 0; i < ps1.length; i++) {
-      if (ps1[i] !== ps2[i]) {
-        differences.push(`Plutus script hash at index ${i} differs`);
-        differences.push(`  TX1: ${ps1[i]}`);
-        differences.push(`  TX2: ${ps2[i]}`);
-      }
-    }
+    return [`Plutus script count differs: ${ps1.length} vs ${ps2.length}`];
   }
 
-  return differences;
+  return ps1.flatMap((hash, i) =>
+    hash !== ps2[i]
+      ? [`Plutus script hash at index ${i} differs`, `  TX1: ${hash}`, `  TX2: ${ps2[i]}`]
+      : [],
+  );
 }
 
 /**
@@ -89,23 +87,7 @@ export function compareTransactions(
   tx1: DecodedTransaction,
   tx2: DecodedTransaction,
 ): ComparisonResult {
-  const inputDifferences: string[] = [];
-
-  // Compare inputs
-  if (tx1.inputs.length !== tx2.inputs.length) {
-    inputDifferences.push(`Input count differs: ${tx1.inputs.length} vs ${tx2.inputs.length}`);
-  } else {
-    for (let i = 0; i < tx1.inputs.length; i++) {
-      if (
-        tx1.inputs[i].txHash !== tx2.inputs[i].txHash ||
-        tx1.inputs[i].index !== tx2.inputs[i].index
-      ) {
-        inputDifferences.push(`Input at position ${i} differs (affects redeemer indices!)`);
-        inputDifferences.push(`  TX1: ${tx1.inputs[i].txHash}#${tx1.inputs[i].index}`);
-        inputDifferences.push(`  TX2: ${tx2.inputs[i].txHash}#${tx2.inputs[i].index}`);
-      }
-    }
-  }
+  const inputDifferences = compareInputs(tx1.inputs, tx2.inputs);
 
   return {
     scriptDataHashMatch: tx1.scriptDataHash === tx2.scriptDataHash,
@@ -113,6 +95,25 @@ export function compareTransactions(
     witnessSetDifferences: compareWitnessSets(tx1.witnessSet, tx2.witnessSet),
     inputDifferences,
   };
+}
+
+function compareInputs(
+  inputs1: DecodedTransaction["inputs"],
+  inputs2: DecodedTransaction["inputs"],
+): string[] {
+  if (inputs1.length !== inputs2.length) {
+    return [`Input count differs: ${inputs1.length} vs ${inputs2.length}`];
+  }
+
+  return inputs1.flatMap((input, i) => {
+    const other = inputs2[i];
+    if (input.txHash === other.txHash && input.index === other.index) return [];
+    return [
+      `Input at position ${i} differs (affects redeemer indices!)`,
+      `  TX1: ${input.txHash}#${input.index}`,
+      `  TX2: ${other.txHash}#${other.index}`,
+    ];
+  });
 }
 
 /**

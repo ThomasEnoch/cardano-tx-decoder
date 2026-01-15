@@ -1,6 +1,8 @@
 import {
   Transaction,
   TransactionWitnessSet,
+  PlutusData,
+  PlutusDatumSchema,
 } from "@emurgo/cardano-serialization-lib-nodejs-gc";
 import type {
   DecodedDatum,
@@ -10,73 +12,47 @@ import type {
   DecodedInput,
 } from "./types.js";
 
+/** Helper to convert CSL list-like objects to arrays */
+function toArray<T>(list: { len(): number; get(i: number): T } | undefined): T[] {
+  if (!list || list.len() === 0) return [];
+  return Array.from({ length: list.len() }, (_, i) => list.get(i));
+}
+
 /**
  * Decode a witness set from hex
  */
 export function decodeWitnessSet(witnessHex: string): DecodedWitnessSet {
   const witnessSet = TransactionWitnessSet.from_hex(witnessHex);
-  const result: DecodedWitnessSet = {};
 
-  // Plutus Data (datums)
-  const plutusData = witnessSet.plutus_data();
-  if (plutusData && plutusData.len() > 0) {
-    result.plutusData = [];
-    for (let i = 0; i < plutusData.len(); i++) {
-      const datum = plutusData.get(i);
-      result.plutusData.push({
-        index: i,
-        hex: datum.to_hex(),
-        json: JSON.parse(datum.to_json()),
-      });
-    }
-  }
+  const plutusData = toArray(witnessSet.plutus_data()).map((datum, index) => ({
+    index,
+    hex: datum.to_hex(),
+    json: JSON.parse(datum.to_json(PlutusDatumSchema.DetailedSchema)),
+  }));
 
-  // Redeemers
-  const redeemers = witnessSet.redeemers();
-  if (redeemers && redeemers.len() > 0) {
-    result.redeemers = [];
-    for (let i = 0; i < redeemers.len(); i++) {
-      const redeemer = redeemers.get(i);
-      result.redeemers.push({
-        tag: redeemer.tag().to_json(),
-        index: redeemer.index().to_str(),
-        dataHex: redeemer.data().to_hex(),
-        dataJson: JSON.parse(redeemer.data().to_json()),
-        exUnits: {
-          mem: redeemer.ex_units().mem().to_str(),
-          steps: redeemer.ex_units().steps().to_str(),
-        },
-      });
-    }
-  }
+  const redeemers = toArray(witnessSet.redeemers()).map((redeemer) => ({
+    tag: redeemer.tag().to_json(),
+    index: redeemer.index().to_str(),
+    dataHex: redeemer.data().to_hex(),
+    dataJson: JSON.parse(redeemer.data().to_json(PlutusDatumSchema.DetailedSchema)),
+    exUnits: {
+      mem: redeemer.ex_units().mem().to_str(),
+      steps: redeemer.ex_units().steps().to_str(),
+    },
+  }));
 
-  // Plutus Scripts
-  const plutusScripts = witnessSet.plutus_scripts();
-  if (plutusScripts && plutusScripts.len() > 0) {
-    result.plutusScriptHashes = [];
-    for (let i = 0; i < plutusScripts.len(); i++) {
-      const script = plutusScripts.get(i);
-      result.plutusScriptHashes.push(script.hash().to_hex());
-    }
-  }
+  const plutusScriptHashes = toArray(witnessSet.plutus_scripts()).map((script) =>
+    script.hash().to_hex()
+  );
 
-  // Counts for other witness types
-  const nativeScripts = witnessSet.native_scripts();
-  if (nativeScripts) {
-    result.nativeScriptCount = nativeScripts.len();
-  }
-
-  const vkeys = witnessSet.vkeys();
-  if (vkeys) {
-    result.vkeyCount = vkeys.len();
-  }
-
-  const bootstraps = witnessSet.bootstraps();
-  if (bootstraps) {
-    result.bootstrapCount = bootstraps.len();
-  }
-
-  return result;
+  return {
+    ...(plutusData.length > 0 && { plutusData }),
+    ...(redeemers.length > 0 && { redeemers }),
+    ...(plutusScriptHashes.length > 0 && { plutusScriptHashes }),
+    ...(witnessSet.native_scripts()?.len() && { nativeScriptCount: witnessSet.native_scripts()!.len() }),
+    ...(witnessSet.vkeys()?.len() && { vkeyCount: witnessSet.vkeys()!.len() }),
+    ...(witnessSet.bootstraps()?.len() && { bootstrapCount: witnessSet.bootstraps()!.len() }),
+  };
 }
 
 /**
@@ -86,23 +62,12 @@ export function decodeTransaction(txHex: string): DecodedTransaction {
   const tx = Transaction.from_hex(txHex);
   const body = tx.body();
 
-  const inputs: DecodedInput[] = [];
-  const txInputs = body.inputs();
-  for (let i = 0; i < txInputs.len(); i++) {
-    const input = txInputs.get(i);
-    inputs.push({
-      txHash: input.transaction_id().to_hex(),
-      index: input.index(),
-    });
-  }
+  const inputs = toArray(body.inputs()).map((input) => ({
+    txHash: input.transaction_id().to_hex(),
+    index: input.index(),
+  }));
 
-  const requiredSigners: string[] = [];
-  const signers = body.required_signers();
-  if (signers) {
-    for (let i = 0; i < signers.len(); i++) {
-      requiredSigners.push(signers.get(i).to_hex());
-    }
-  }
+  const requiredSigners = toArray(body.required_signers()).map((s) => s.to_hex());
 
   return {
     scriptDataHash: body.script_data_hash()?.to_hex() ?? null,
@@ -121,7 +86,6 @@ export function decodeTransaction(txHex: string): DecodedTransaction {
  * Decode plutus data from hex to readable JSON
  */
 export function decodePlutusData(hex: string): unknown {
-  const { PlutusData } = require("@emurgo/cardano-serialization-lib-nodejs-gc");
   const data = PlutusData.from_hex(hex);
-  return JSON.parse(data.to_json());
+  return JSON.parse(data.to_json(PlutusDatumSchema.DetailedSchema));
 }

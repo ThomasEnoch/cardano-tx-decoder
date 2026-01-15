@@ -167,7 +167,7 @@ function printComparison(
   }
 }
 
-async function main() {
+function main(): void {
   const args = process.argv.slice(2);
 
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
